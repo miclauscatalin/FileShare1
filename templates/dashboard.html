@@ -1,0 +1,165 @@
+{% extends "base.html" %}
+{% block title %}Dashboard &ndash; FileShare{% endblock %}
+
+{% block content %}
+<h1 class="mb-4">📁 FileShare Dashboard</h1>
+<form id="upload-form" class="d-flex gap-2 mb-4">
+    <input type="file" name="upload" class="form-control" required>
+    <button type="submit" class="btn btn-primary">Upload</button>
+</form>
+<div class="progress mb-3" style="height: 25px; display:none;" id="upload-progress-wrap">
+    <div id="upload-progress" class="progress-bar progress-bar-striped" style="width:0%;">0%</div>
+</div>
+<div id="upload-status" class="mb-4"></div>
+<ul id="files-list" class="list-group">
+  {% for f in files %}
+    <li class="list-group-item d-flex justify-content-between align-items-center" data-file-id="{{ f.id }}">
+      <div>
+        <a href="{{ f.upload.url }}" target="_blank">{{ f.upload.name|slice:"9:" }}</a><br>
+        <small class="text-muted">{{ f.uploaded_at|date:"d.m.Y H:i" }}</small>
+      </div>
+      <div>
+        <button class="btn btn-sm btn-outline-secondary share-button ms-2">Share</button>
+        <button class="btn btn-sm btn-danger delete-button ms-2">Șterge</button>
+      </div>
+    </li>
+  {% empty %}
+    <li class="list-group-item">Nu ai încărcat niciun fișier.</li>
+  {% endfor %}
+</ul>
+{% endblock %}
+
+{% block extra_js %}
+<script>
+// Helper CSRF
+function getCookie(name) {
+  let v = document.cookie.match('(^|;) ?' + name + '=([^;]*)(;|$)');
+  return v ? v[2] : null;
+}
+const csrftoken = getCookie('csrftoken');
+
+// Upload cu progress bar
+document.getElementById('upload-form').addEventListener('submit', function(e) {
+  e.preventDefault();
+  const input = this.upload;
+  const file = input.files[0];
+  if (!file) return;
+  const form = new FormData();
+  form.append('upload', file);
+
+  const progressWrap = document.getElementById('upload-progress-wrap');
+  const progressBar = document.getElementById('upload-progress');
+  progressWrap.style.display = 'block';
+  progressBar.style.width = "0%";
+  progressBar.textContent = "0%";
+
+  const xhr = new XMLHttpRequest();
+  xhr.open('POST', "{% url 'api-upload' %}", true);
+  xhr.setRequestHeader('X-CSRFToken', csrftoken);
+
+  xhr.upload.onprogress = function(e) {
+    if (e.lengthComputable) {
+      let percent = Math.round((e.loaded / e.total) * 100);
+      progressBar.style.width = percent + '%';
+      progressBar.textContent = percent + '%';
+    }
+  };
+
+  xhr.onload = function() {
+    progressWrap.style.display = 'none';
+    progressBar.style.width = '0%';
+    progressBar.textContent = '0%';
+    let data = {};
+    try { data = JSON.parse(xhr.responseText); } catch (e) {}
+    if (xhr.status === 201) {
+      document.getElementById('upload-status').innerHTML = '<span class="text-success">Upload OK!</span>';
+      // Adaugă fișierul nou în listă
+      const li = document.createElement('li');
+      li.className = "list-group-item d-flex justify-content-between align-items-center";
+      li.dataset.fileId = data.id;
+      li.innerHTML = `<div>
+          <a href="${data.upload}" target="_blank">${data.upload.split('/').pop()}</a><br>
+          <small class="text-muted">acum</small>
+        </div>
+        <div>
+          <button class="btn btn-sm btn-outline-secondary share-button ms-2">Share</button>
+          <button class="btn btn-sm btn-danger delete-button ms-2">Șterge</button>
+        </div>`;
+      document.getElementById('files-list').prepend(li);
+    } else {
+      document.getElementById('upload-status').innerHTML = '<span class="text-danger">Eroare la upload!</span>';
+    }
+  };
+
+  xhr.send(form);
+});
+
+// Share + Ștergere
+document.getElementById('files-list').addEventListener('click', async e => {
+  // Share
+  if (e.target.matches('.share-button')) {
+    const li = e.target.closest('li');
+    const fileId = li.dataset.fileId;
+    const message = prompt('Mesaj pentru share:', '');
+    if (message === null) return;
+    const resp = await fetch("{% url 'api-share' %}", {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': csrftoken
+      },
+      credentials: 'same-origin',
+      body: JSON.stringify({ file: parseInt(fileId), message })
+    });
+    const data = await resp.json();
+    if (resp.ok) {
+      alert('Share creat cu success!');
+    } else {
+      alert('Eroare la share: ' + (data.detail || 'unknown'));
+    }
+    return;
+  }
+
+  // Ștergere
+  if (e.target.matches('.delete-button')) {
+    const li = e.target.closest('li');
+    const fileId = li.dataset.fileId;
+    if (!confirm('Sigur ștergi acest fișier?')) return;
+    const resp = await fetch(`/api/delete/${fileId}/`, {
+      method: 'POST',
+      headers: {'X-CSRFToken': csrftoken},
+      credentials: 'same-origin'
+    });
+    const data = await resp.json();
+    if (resp.ok && data.status === 'ok') {
+      li.remove();
+      document.getElementById('upload-status').innerHTML = '<span class="text-success">Fișier șters!</span>';
+    } else {
+      alert('Eroare la ștergere!');
+    }
+  }
+});
+document.addEventListener("DOMContentLoaded", function() {
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register("{% static 'webpush/sw.js' %}");
+  }
+  // Cere permisiunea la push și salvează endpoint-ul la userul logat
+  if (window.webpush !== undefined) {
+    webpush.subscribe({
+      applicationServerKey: "{{ vapid_public_key }}",
+      userVisibleOnly: true,
+    }).then(function(subscription) {
+      fetch('/webpush/save_information/', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken,
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify(subscription)
+      });
+    });
+  }
+});
+</script>
+{% endblock %}
