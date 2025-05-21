@@ -13,18 +13,29 @@
 <div id="upload-status" class="mb-4"></div>
 <ul id="files-list" class="list-group">
   {% for f in files %}
-    <li class="list-group-item d-flex justify-content-between align-items-center" data-file-id="{{ f.id }}">
+    <li class="list-group-item d-flex justify-content-between align-items-center" data-file-id="{{ f.file.id }}">
       <div>
-        <a href="{{ f.upload.url }}" target="_blank">{{ f.upload.name|slice:"9:" }}</a><br>
-        <small class="text-muted">{{ f.uploaded_at|date:"d.m.Y H:i" }}</small>
+        <a href="{{ f.file.upload.url }}" target="_blank">{{ f.file.upload.name|slice:"9:" }}</a><br>
+        <small class="text-muted">{{ f.uploaded_at|date:"d.m.Y H:i" }} | {{ f.size|filesizeformat }}</small>
+        {% if f.is_owned %}
+            <small class="badge bg-primary">Owned</small>
+        {% elif f.shared_by %}
+            <small class="badge bg-secondary">Shared by {{ f.shared_by.username }}</small>
+        {% else %}
+            <small class="badge bg-secondary">Shared</small>
+        {% endif %}
       </div>
       <div>
+        {% if f.is_owned %}
         <button class="btn btn-sm btn-outline-secondary share-button ms-2">Share</button>
         <button class="btn btn-sm btn-danger delete-button ms-2">Șterge</button>
       </div>
     </li>
   {% empty %}
     <li class="list-group-item">Nu ai încărcat niciun fișier.</li>
+  {% endfor %}
+  {% for s in shared_files %}
+    <li class="list-group-item">Shared file: {{ s.file.upload.name }}</li>
   {% endfor %}
 </ul>
 {% endblock %}
@@ -94,37 +105,58 @@ document.getElementById('upload-form').addEventListener('submit', function(e) {
   xhr.send(form);
 });
 
-// Share + Ștergere
+// Share functionality
 document.getElementById('files-list').addEventListener('click', async e => {
   // Share
   if (e.target.matches('.share-button')) {
     const li = e.target.closest('li');
     const fileId = li.dataset.fileId;
-    const message = prompt('Mesaj pentru share:', '');
-    if (message === null) return;
-    const resp = await fetch("{% url 'api-share' %}", {
-      method: 'POST',
+
+    // Fetch users
+    const usersResp = await fetch("/api/users/", {
       headers: {
-        'Content-Type': 'application/json',
         'X-CSRFToken': csrftoken
-      },
-      credentials: 'same-origin',
-      body: JSON.stringify({ file: parseInt(fileId), message })
+      }
     });
-    const data = await resp.json();
-    if (resp.ok) {
-      alert('Share creat cu success!');
+    const users = await usersResp.json();
+
+    // Prompt for recipient username
+    const recipientUsername = prompt('Enter recipient username:');
+    if (!recipientUsername) return; // User cancelled
+
+    // Find recipient user ID
+    const recipientUser = users.find(user => user.username === recipientUsername);
+
+    if (recipientUser) {
+      const message = prompt('Message for share (optional):', '');
+
+      const shareResp = await fetch("{% url 'api-share' %}", {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': csrftoken
+        },
+        credentials: 'same-origin',
+        body: JSON.stringify({ file: parseInt(fileId), message: message, recipient: recipientUser.id })
+      });
+
+      const shareData = await shareResp.json();
+      if (shareResp.ok) {
+        alert('Share created successfully!');
+      } else {
+        alert('Error creating share: ' + (shareData.detail || 'unknown'));
+      }
     } else {
-      alert('Eroare la share: ' + (data.detail || 'unknown'));
+      alert('User not found.');
     }
     return;
   }
 
-  // Ștergere
+  // Delete functionality (keep existing delete code)
   if (e.target.matches('.delete-button')) {
     const li = e.target.closest('li');
     const fileId = li.dataset.fileId;
-    if (!confirm('Sigur ștergi acest fișier?')) return;
+    if (!confirm('Are you sure you want to delete this file?')) return;
     const resp = await fetch(`/api/delete/${fileId}/`, {
       method: 'POST',
       headers: {'X-CSRFToken': csrftoken},
@@ -133,32 +165,10 @@ document.getElementById('files-list').addEventListener('click', async e => {
     const data = await resp.json();
     if (resp.ok && data.status === 'ok') {
       li.remove();
-      document.getElementById('upload-status').innerHTML = '<span class="text-success">Fișier șters!</span>';
+      document.getElementById('upload-status').innerHTML = '<span class="text-success">File deleted!</span>';
     } else {
-      alert('Eroare la ștergere!');
+      alert('Error deleting file!');
     }
-  }
-});
-document.addEventListener("DOMContentLoaded", function() {
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register("{% static 'webpush/sw.js' %}");
-  }
-  // Cere permisiunea la push și salvează endpoint-ul la userul logat
-  if (window.webpush !== undefined) {
-    webpush.subscribe({
-      applicationServerKey: "{{ vapid_public_key }}",
-      userVisibleOnly: true,
-    }).then(function(subscription) {
-      fetch('/webpush/save_information/', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'X-CSRFToken': csrftoken,
-        },
-        credentials: 'same-origin',
-        body: JSON.stringify(subscription)
-      });
-    });
   }
 });
 </script>

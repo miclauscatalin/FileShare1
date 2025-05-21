@@ -12,4 +12,4 @@ class Share(models.Model):
     token = models.UUIDField(default=uuid.uuid4, unique=True, editable=False)
     message = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
-    # opțional: recipient = FK către User dacă vrei ACL
+    recipient = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, null=True, blank=True)

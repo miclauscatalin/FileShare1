@@ -2,7 +2,7 @@ from django.contrib import admin
 from django.urls import path
 from share.views import (
     FileUploadView, ShareCreateView, download_file, DashboardView
-)
+    , UserListView)
 from django.contrib.auth import views as auth_views
 from share.views import delete_file
 from django.urls import include
@@ -16,4 +16,5 @@ urlpatterns = [
     path("download/<uuid:token>/", download_file, name="download-file"),
     path("api/delete/<int:pk>/", delete_file, name="api-delete-file"),
     path('webpush/', include('webpush.urls')),
+    path('api/users/', UserListView.as_view(), name='api-users'),
 ]
